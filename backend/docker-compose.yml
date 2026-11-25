@@ -1,0 +1,140 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: exammanager-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-exammanager}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-exammanager_secret}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./postgres-init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-exammanager}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    container_name: exammanager-rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-exammanager}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-exammanager_secret}
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  auth-service:
+    build: ./auth-service
+    container_name: exammanager-auth
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-exammanager}:${POSTGRES_PASSWORD:-exammanager_secret}@postgres:5432/auth_db
+    ports:
+      - "8001:8001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  exam-service:
+    build: ./exam-service
+    container_name: exammanager-exam
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-exammanager}:${POSTGRES_PASSWORD:-exammanager_secret}@postgres:5432/exam_db
+    ports:
+      - "8002:8002"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+
+  room-service:
+    build: ./room-service
+    container_name: exammanager-room
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-exammanager}:${POSTGRES_PASSWORD:-exammanager_secret}@postgres:5432/room_db
+    ports:
+      - "8003:8003"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  user-service:
+    build: ./user-service
+    container_name: exammanager-user
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-exammanager}:${POSTGRES_PASSWORD:-exammanager_secret}@postgres:5432/user_db
+    ports:
+      - "8004:8004"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  grade-service:
+    build: ./grade-service
+    container_name: exammanager-grade
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-exammanager}:${POSTGRES_PASSWORD:-exammanager_secret}@postgres:5432/grade_db
+    ports:
+      - "8005:8005"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+
+  notification-service:
+    build: ./notification-service
+    container_name: exammanager-notification
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-exammanager}:${POSTGRES_PASSWORD:-exammanager_secret}@postgres:5432/notification_db
+    ports:
+      - "8006:8006"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+
+  soap-service:
+    build: ./soap-service
+    container_name: exammanager-soap
+    env_file: .env
+    ports:
+      - "8007:8007"
+    depends_on:
+      - exam-service
+      - room-service
+      - user-service
+      - grade-service
+
+  api-gateway:
+    build: ./api-gateway
+    container_name: exammanager-gateway
+    env_file: .env
+    ports:
+      - "8000:8000"
+    depends_on:
+      - auth-service
+      - exam-service
+      - room-service
+      - user-service
+      - grade-service
+      - notification-service
+      - soap-service
+
+volumes:
+  postgres_data:

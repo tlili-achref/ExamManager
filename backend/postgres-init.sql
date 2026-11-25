@@ -1,0 +1,6 @@
+CREATE DATABASE auth_db;
+CREATE DATABASE exam_db;
+CREATE DATABASE room_db;
+CREATE DATABASE user_db;
+CREATE DATABASE grade_db;
+CREATE DATABASE notification_db;

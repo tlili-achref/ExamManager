@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<con:soapui-project id="exammanager-soap" name="ExamManager SOAP" xmlns:con="http://eviware.com/soapui/config">
+  <con:interface xsi:type="con:WsdlInterface" name="ExamManagerSoapService" definition="http://localhost:8000/ws/soap?wsdl" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+    <con:endpoints>
+      <con:endpoint>http://localhost:8000/ws/soap</con:endpoint>
+    </con:endpoints>
+    <con:operation name="getExamsByStudent">
+      <con:call name="Sample getExamsByStudent">
+        <con:request><![CDATA[
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:tns="urn:exammanager:soap">
+  <soapenv:Body>
+    <tns:getExamsByStudent>
+      <tns:student_id>1</tns:student_id>
+    </tns:getExamsByStudent>
+  </soapenv:Body>
+</soapenv:Envelope>
+        ]]></con:request>
+      </con:call>
+    </con:operation>
+    <con:operation name="getStudentTranscript">
+      <con:call name="Sample getStudentTranscript">
+        <con:request><![CDATA[
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:tns="urn:exammanager:soap">
+  <soapenv:Body>
+    <tns:getStudentTranscript>
+      <tns:student_id>1</tns:student_id>
+    </tns:getStudentTranscript>
+  </soapenv:Body>
+</soapenv:Envelope>
+        ]]></con:request>
+      </con:call>
+    </con:operation>
+    <con:operation name="getExamConvocation">
+      <con:call name="Sample getExamConvocation">
+        <con:request><![CDATA[
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:tns="urn:exammanager:soap">
+  <soapenv:Body>
+    <tns:getExamConvocation>
+      <tns:student_id>1</tns:student_id>
+      <tns:exam_id>1</tns:exam_id>
+    </tns:getExamConvocation>
+  </soapenv:Body>
+</soapenv:Envelope>
+        ]]></con:request>
+      </con:call>
+    </con:operation>
+    <con:operation name="checkRoomAvailability">
+      <con:call name="Sample checkRoomAvailability">
+        <con:request><![CDATA[
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:tns="urn:exammanager:soap">
+  <soapenv:Body>
+    <tns:checkRoomAvailability>
+      <tns:room_id>1</tns:room_id>
+      <tns:exam_date>2025-06-03</tns:exam_date>
+      <tns:start_time>08:30</tns:start_time>
+      <tns:duration_minutes>90</tns:duration_minutes>
+    </tns:checkRoomAvailability>
+  </soapenv:Body>
+</soapenv:Envelope>
+        ]]></con:request>
+      </con:call>
+    </con:operation>
+  </con:interface>
+</con:soapui-project>

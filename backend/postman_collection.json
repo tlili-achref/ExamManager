@@ -1,0 +1,76 @@
+{
+  "info": {
+    "name": "ExamManager REST API",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:8000" },
+    { "key": "token", "value": "" }
+  ],
+  "item": [
+    {
+      "name": "Auth - Login",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "url": "{{baseUrl}}/api/auth/login",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"email\": \"amine.benamor@isi.utm.tn\",\n  \"password\": \"exammanager\"\n}"
+        }
+      }
+    },
+    {
+      "name": "Status - Services Health",
+      "request": { "method": "GET", "url": "{{baseUrl}}/status" }
+    },
+    {
+      "name": "Exams - List",
+      "request": {
+        "method": "GET",
+        "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+        "url": "{{baseUrl}}/api/exams"
+      }
+    },
+    {
+      "name": "Exams - Planning & Conflicts",
+      "request": {
+        "method": "GET",
+        "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+        "url": "{{baseUrl}}/api/exams/planning"
+      }
+    },
+    {
+      "name": "Rooms - List",
+      "request": {
+        "method": "GET",
+        "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+        "url": "{{baseUrl}}/api/rooms"
+      }
+    },
+    {
+      "name": "Grades - Stats",
+      "request": {
+        "method": "GET",
+        "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+        "url": "{{baseUrl}}/api/grades/stats"
+      }
+    },
+    {
+      "name": "Notifications - List",
+      "request": {
+        "method": "GET",
+        "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+        "url": "{{baseUrl}}/api/notifications"
+      }
+    },
+    {
+      "name": "Convocation PDF (via SOAP)",
+      "request": {
+        "method": "GET",
+        "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+        "url": "{{baseUrl}}/api/convocation/1/1"
+      }
+    }
+  ]
+}

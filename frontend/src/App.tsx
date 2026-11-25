@@ -1,4 +1,12 @@
-import { useMemo, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { login as apiLogin, logout as apiLogout } from './api/auth'
+import { AuthUser, getStoredUser, getToken, setUnauthorizedHandler } from './api/client'
+import { createExam, deleteExam, Exam, ConflictItem, getExams, getPlanning, updateExam } from './api/exams'
+import { getGrades, getGradeStats, Grade, GradeStats, importGradesCsv, publishGrades, updateGradeScore } from './api/grades'
+import { getNotifications, markAllNotificationsRead, markNotificationRead, NotificationItem } from './api/notifications'
+import { createRoom, deleteRoom, getRooms, Room } from './api/rooms'
+import { downloadConvocationPdf, getServicesStatus, ServiceSummary } from './api/status'
+import { assignSupervisor, getGroups, getStudents, getSubjects, getSupervisors, getTeachers, Group, removeSupervisor, Student, Subject, SupervisorAssignment, Teacher } from './api/users'
 
 type View =
   | 'dashboard'
@@ -86,16 +94,16 @@ function Badge({ status }: { status: string }) {
 }
 
 function Avatar({ name, color = 'blue' }: { name: string; color?: 'blue' | 'teal' | 'amber' }) {
-  const letters = name.split(' ').map((part) => part[0]).slice(0, 2).join('')
+  const letters = name.split(' ').filter(Boolean).map((part) => part[0]).slice(0, 2).join('')
   return <span className={`avatar avatar-${color}`}>{letters}</span>
 }
 
-function Input({ label, placeholder, icon, type = 'text', defaultValue }: { label?: string; placeholder?: string; icon?: IconName; type?: string; defaultValue?: string }) {
-  return <label className="field">{label && <span>{label}</span>}<div className="input-wrap">{icon && <Icon name={icon} size={18} />}<input type={type} placeholder={placeholder} defaultValue={defaultValue} /></div></label>
+function Input({ label, placeholder, icon, type = 'text', value, onChange }: { label?: string; placeholder?: string; icon?: IconName; type?: string; value?: string | number; onChange?: (val: string) => void }) {
+  return <label className="field">{label && <span>{label}</span>}<div className="input-wrap">{icon && <Icon name={icon} size={18} />}<input type={type} placeholder={placeholder} value={value ?? ''} onChange={(e) => onChange?.(e.target.value)} /></div></label>
 }
 
-function Select({ label, children, defaultValue }: { label?: string; children: ReactNode; defaultValue?: string }) {
-  return <label className="field">{label && <span>{label}</span>}<select defaultValue={defaultValue}>{children}</select></label>
+function Select({ label, children, value, onChange }: { label?: string; children: ReactNode; value?: string; onChange?: (val: string) => void }) {
+  return <label className="field">{label && <span>{label}</span>}<select value={value} onChange={(e) => onChange?.(e.target.value)}>{children}</select></label>
 }
 
 const nav: { id: View; label: string; icon: IconName }[] = [
@@ -112,20 +120,52 @@ const nav: { id: View; label: string; icon: IconName }[] = [
 ]
 
 const viewTitles: Record<View, { title: string; subtitle: string }> = {
-  dashboard: { title: 'Bonjour, Amine', subtitle: 'Voici un aperçu de la session d’examens.' },
+  dashboard: { title: 'Tableau de bord', subtitle: 'Voici un aperçu de la session d’examens.' },
   exams: { title: 'Examens', subtitle: 'Planifiez et gérez l’ensemble des examens.' },
   planning: { title: 'Planning', subtitle: 'Visualisez le calendrier et détectez les conflits.' },
   rooms: { title: 'Salles', subtitle: 'Gérez les capacités et disponibilités des salles.' },
   subjects: { title: 'Matières & Groupes', subtitle: 'Organisez les unités d’enseignement et les promotions.' },
   supervisors: { title: 'Affectation des surveillants', subtitle: 'Glissez les enseignants sur les créneaux d’examen.' },
-  grades: { title: 'Saisie des notes', subtitle: 'Génie Logiciel — GL3 · Session principale' },
-  student: { title: 'Mon espace', subtitle: 'Bienvenue, Yasmine. Retrouvez vos examens et résultats.' },
+  grades: { title: 'Saisie des notes', subtitle: 'Session principale · Saisie & publication' },
+  student: { title: 'Mon espace', subtitle: 'Retrouvez vos examens, convocations et résultats.' },
   notifications: { title: 'Notifications', subtitle: 'Consultez les dernières activités de la plateforme.' },
   services: { title: 'État des services', subtitle: 'Surveillance en temps réel de l’infrastructure ISI.' },
 }
 
-function Login({ onLogin }: { onLogin: (role: string) => void }) {
-  const [role, setRole] = useState('Admin')
+function formatDuration(minutes: number): string {
+  const h = Math.floor(minutes / 60)
+  const m = minutes % 60
+  return `${h}h${String(m).padStart(2, '0')}`
+}
+
+function Login({ onLogin }: { onLogin: (user: AuthUser) => void }) {
+  const [email, setEmail] = useState('amine.benamor@isi.utm.tn')
+  const [password, setPassword] = useState('exammanager')
+  const [profileHint, setProfileHint] = useState('Admin')
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const handleProfileChange = (val: string) => {
+    setProfileHint(val)
+    if (val === 'Admin') setEmail('amine.benamor@isi.utm.tn')
+    if (val === 'Enseignant') setEmail('leila.trabelsi@isi.utm.tn')
+    if (val === 'Étudiant') setEmail('yasmine.benamor@isi.utm.tn')
+  }
+
+  const submit = async (event: React.FormEvent) => {
+    event.preventDefault()
+    setLoading(true)
+    setError(null)
+    try {
+      const res = await apiLogin(email, password)
+      onLogin(res.user)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Identifiants invalides')
+    } finally {
+      setLoading(false)
+    }
+  }
+
   return <main className="login-page">
     <section className="login-brand">
       <div className="login-brand-inner">
@@ -139,12 +179,13 @@ function Login({ onLogin }: { onLogin: (role: string) => void }) {
       <div className="login-form">
         <div className="mobile-brand brand"><span className="brand-mark">E</span><span>ExamManager</span></div>
         <div><span className="eyebrow eyebrow-blue">ESPACE SÉCURISÉ</span><h2>Connectez-vous</h2><p className="muted">Accédez à votre espace de gestion universitaire.</p></div>
-        <form onSubmit={(event) => { event.preventDefault(); onLogin(role) }}>
-          <Input label="Adresse e-mail" icon="mail" type="email" placeholder="prenom.nom@isi.utm.tn" defaultValue="amine.benamor@isi.utm.tn" />
-          <Input label="Mot de passe" icon="lock" type="password" placeholder="••••••••" defaultValue="exammanager" />
-          <Select label="Profil" defaultValue={role}><option>Admin</option><option>Enseignant</option><option>Étudiant</option></Select>
+        <form onSubmit={submit}>
+          <Input label="Adresse e-mail" icon="mail" type="email" placeholder="prenom.nom@isi.utm.tn" value={email} onChange={setEmail} />
+          <Input label="Mot de passe" icon="lock" type="password" placeholder="••••••••" value={password} onChange={setPassword} />
+          <Select label="Profil" value={profileHint} onChange={handleProfileChange}><option>Admin</option><option>Enseignant</option><option>Étudiant</option></Select>
+          {error && <div className="warning-banner"><Icon name="warning" /><div><b>Connexion impossible</b><span>{error}</span></div></div>}
           <div className="login-options"><label className="check-label"><input type="checkbox" defaultChecked /> Se souvenir de moi</label><button type="button" className="text-button">Mot de passe oublié ?</button></div>
-          <button className="btn btn-primary btn-large" type="submit" onClick={() => setRole((document.querySelector('select') as HTMLSelectElement)?.value || role)}>Se connecter <Icon name="chevron" size={18} /></button>
+          <button className="btn btn-primary btn-large" type="submit" disabled={loading}>{loading ? 'Connexion...' : 'Se connecter'} <Icon name="chevron" size={18} /></button>
         </form>
         <p className="login-help">Besoin d’aide ? <b>Contactez le service informatique</b></p>
       </div>
@@ -152,23 +193,25 @@ function Login({ onLogin }: { onLogin: (role: string) => void }) {
   </main>
 }
 
-function AppShell({ view, setView, role, logout, children }: { view: View; setView: (v: View) => void; role: string; logout: () => void; children: ReactNode }) {
+function AppShell({ view, setView, user, unreadCount, logout, children }: { view: View; setView: (v: View) => void; user: AuthUser; unreadCount: number; logout: () => void; children: ReactNode }) {
   const [mobileOpen, setMobileOpen] = useState(false)
   const info = viewTitles[view]
   const go = (id: View) => { setView(id); setMobileOpen(false) }
+  const roleLabel = user.role === 'ADMIN' ? 'Admin' : user.role === 'TEACHER' ? 'Enseignant' : 'Étudiant'
+
   return <div className="app-shell">
     <aside className={`sidebar ${mobileOpen ? 'sidebar-open' : ''}`}>
       <div className="sidebar-head"><div className="brand brand-light"><span className="brand-mark">E</span><span>ExamManager</span></div><button className="icon-button close-menu" onClick={() => setMobileOpen(false)}><Icon name="close" /></button></div>
       <div className="session-pill"><span>SESSION ACTIVE</span><b>Principale · 2024/2025</b></div>
-      <nav>{nav.map((item) => <button key={item.id} onClick={() => go(item.id)} className={`nav-item ${view === item.id ? 'active' : ''}`}><Icon name={item.icon} size={19} /><span>{item.label}</span>{item.id === 'notifications' && <i>3</i>}</button>)}</nav>
-      <div className="sidebar-user"><Avatar name="Amine Ben Amor" /><div><b>Amine Ben Amor</b><span>{role}</span></div><button className="icon-button" onClick={logout} title="Déconnexion"><Icon name="logout" size={18} /></button></div>
+      <nav>{nav.map((item) => <button key={item.id} onClick={() => go(item.id)} className={`nav-item ${view === item.id ? 'active' : ''}`}><Icon name={item.icon} size={19} /><span>{item.label}</span>{item.id === 'notifications' && unreadCount > 0 && <i>{unreadCount}</i>}</button>)}</nav>
+      <div className="sidebar-user"><Avatar name={user.full_name} /><div><b>{user.full_name}</b><span>{roleLabel}</span></div><button className="icon-button" onClick={logout} title="Déconnexion"><Icon name="logout" size={18} /></button></div>
     </aside>
     {mobileOpen && <div className="scrim" onClick={() => setMobileOpen(false)} />}
     <section className="content-area">
       <header className="topbar">
         <button className="icon-button mobile-menu" onClick={() => setMobileOpen(true)}><Icon name="menu" /></button>
-        <div className="topbar-title"><h1>{info.title}</h1><p>{info.subtitle}</p></div>
-        <div className="topbar-actions"><div className="top-search"><Icon name="search" size={18} /><input placeholder="Rechercher..." /></div><button className="icon-button notification-button" onClick={() => setView('notifications')}><Icon name="bell" /><span /></button><Avatar name="Amine Ben Amor" /></div>
+        <div className="topbar-title"><h1>{view === 'dashboard' ? `Bonjour, ${user.full_name.split(' ')[0]}` : info.title}</h1><p>{info.subtitle}</p></div>
+        <div className="topbar-actions"><div className="top-search"><Icon name="search" size={18} /><input placeholder="Rechercher..." /></div><button className="icon-button notification-button" onClick={() => setView('notifications')}><Icon name="bell" />{unreadCount > 0 && <span />}</button><Avatar name={user.full_name} /></div>
       </header>
       <main className="page-content">{children}</main>
       <nav className="bottom-nav">{nav.slice(0, 4).map((item) => <button key={item.id} className={view === item.id ? 'active' : ''} onClick={() => go(item.id)}><Icon name={item.icon} size={20} /><span>{item.label.split(' ')[0]}</span></button>)}<button onClick={() => setMobileOpen(true)}><Icon name="menu" size={20} /><span>Plus</span></button></nav>
@@ -177,154 +220,565 @@ function AppShell({ view, setView, role, logout, children }: { view: View; setVi
 }
 
 function KpiCard({ label, value, detail, icon, color }: { label: string; value: string; detail: string; icon: IconName; color: string }) {
-  return <div className="card kpi-card"><div className={`kpi-icon ${color}`}><Icon name={icon} /></div><div className="kpi-main"><span>{label}</span><b>{value}</b><small><strong>+{detail}</strong> ce mois</small></div><div className="sparkline"><i /><i /><i /><i /><i /><i /></div></div>
+  return <div className="card kpi-card"><div className={`kpi-icon ${color}`}><Icon name={icon} /></div><div className="kpi-main"><span>{label}</span><b>{value}</b><small><strong>{detail}</strong> actifs</small></div><div className="sparkline"><i /><i /><i /><i /><i /><i /></div></div>
+}
+
+function ExamListItem({ time, duration, title, meta, room, color }: { time: string; duration?: string; title: string; meta: string; room: string; color: string }) {
+  return <div className="exam-list-item"><div className="exam-time"><b>{time}</b><span>{duration || '1h30'}</span></div><i className={`exam-line ${color}`} /><div className="exam-info"><b>{title}</b><span>{meta}</span></div><span className="room-tag"><Icon name="room" size={15} />{room}</span><Icon name="chevron" size={18} /></div>
 }
 
 function Dashboard({ navigate }: { navigate: (v: View) => void }) {
+  const [exams, setExams] = useState<Exam[]>([])
+  const [rooms, setRooms] = useState<Room[]>([])
+  const [teachersCount, setTeachersCount] = useState(0)
+  const [studentsCount, setStudentsCount] = useState(0)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    Promise.all([getExams(), getRooms(), getTeachers(), getStudents()])
+      .then(([ex, rm, tc, st]) => {
+        setExams(ex)
+        setRooms(rm)
+        setTeachersCount(tc.length)
+        setStudentsCount(st.length)
+      })
+      .catch((e) => setError(e instanceof Error ? e.message : 'Erreur de chargement'))
+  }, [])
+
+  const colors = ['blue', 'teal', 'amber', 'violet']
+  const deptCounts = useMemo(() => {
+    const map: Record<string, number> = {}
+    exams.forEach((e) => { map[e.department] = (map[e.department] || 0) + 1 })
+    return Object.entries(map)
+  }, [exams])
+
   return <div className="page-stack">
+    {error && <div className="warning-banner"><Icon name="warning" /><div><b>Erreur</b><span>{error}</span></div></div>}
     <div className="quick-row"><div className="date-card"><Icon name="calendar" /><div><span>Session principale</span><b>03 — 21 Juin 2025</b></div></div><Button icon="plus" onClick={() => navigate('exams')}>Nouvel examen</Button></div>
     <div className="kpi-grid">
-      <KpiCard label="Examens planifiés" value="48" detail="12" icon="exam" color="blue" />
-      <KpiCard label="Salles disponibles" value="26" detail="4" icon="room" color="teal" />
-      <KpiCard label="Enseignants" value="128" detail="8" icon="people" color="amber" />
-      <KpiCard label="Étudiants inscrits" value="2 452" detail="124" icon="student" color="violet" />
+      <KpiCard label="Examens planifiés" value={String(exams.length)} detail={String(exams.filter((e) => e.status === 'Planifié').length)} icon="exam" color="blue" />
+      <KpiCard label="Salles disponibles" value={String(rooms.filter((r) => r.available).length)} detail={String(rooms.length)} icon="room" color="teal" />
+      <KpiCard label="Enseignants" value={String(teachersCount)} detail={String(teachersCount)} icon="people" color="amber" />
+      <KpiCard label="Étudiants inscrits" value={String(studentsCount)} detail={String(studentsCount)} icon="student" color="violet" />
     </div>
     <div className="dashboard-grid">
       <section className="card schedule-card">
-        <div className="section-head"><div><h2>Prochains examens</h2><p>Cette semaine · 03–07 Juin</p></div><button className="text-button" onClick={() => navigate('planning')}>Voir le planning <Icon name="chevron" size={16} /></button></div>
-        <div className="day-tabs"><button className="active"><b>03</b><span>Lun.</span></button><button><b>04</b><span>Mar.</span></button><button><b>05</b><span>Mer.</span></button><button><b>06</b><span>Jeu.</span></button><button><b>07</b><span>Ven.</span></button></div>
+        <div className="section-head"><div><h2>Prochains examens</h2><p>Session principale</p></div><button className="text-button" onClick={() => navigate('planning')}>Voir le planning <Icon name="chevron" size={16} /></button></div>
         <div className="upcoming-list">
-          <ExamListItem time="08:30" title="Génie Logiciel" meta="GL3 · 90 étudiants" room="Amphi A" color="blue" />
-          <ExamListItem time="10:30" title="Bases de Données" meta="L2 INFO · 64 étudiants" room="Salle B12" color="teal" />
-          <ExamListItem time="14:00" title="Réseaux Avancés" meta="RT3 · 42 étudiants" room="Salle C04" color="amber" />
+          {exams.slice(0, 4).map((e, i) => (
+            <ExamListItem key={e.id} time={e.start_time.slice(0, 5)} duration={formatDuration(e.duration_minutes)} title={e.subject_name} meta={`${e.group_name} · ${e.exam_date}`} room={e.room_name} color={colors[i % colors.length]} />
+          ))}
         </div>
       </section>
       <section className="card chart-card">
-        <div className="section-head"><div><h2>Examens par département</h2><p>Session principale</p></div><button className="icon-button">•••</button></div>
-        <div className="donut-wrap"><div className="donut"><div><b>48</b><span>Total</span></div></div><div className="legend"><span><i className="lg-blue" />Informatique <b>22</b></span><span><i className="lg-teal" />Génie Logiciel <b>14</b></span><span><i className="lg-amber" />Réseaux <b>8</b></span><span><i className="lg-gray" />Systèmes <b>4</b></span></div></div>
+        <div className="section-head"><div><h2>Examens par département</h2><p>Session principale</p></div></div>
+        <div className="donut-wrap"><div className="donut"><div><b>{exams.length}</b><span>Total</span></div></div><div className="legend">{deptCounts.map(([dept, count], idx) => <span key={dept}><i className={`lg-${['blue', 'teal', 'amber', 'gray'][idx % 4]}`} />{dept} <b>{count}</b></span>)}</div></div>
       </section>
     </div>
   </div>
 }
 
-function ExamListItem({ time, title, meta, room, color }: { time: string; title: string; meta: string; room: string; color: string }) {
-  return <div className="exam-list-item"><div className="exam-time"><b>{time}</b><span>1h30</span></div><i className={`exam-line ${color}`} /><div className="exam-info"><b>{title}</b><span>{meta}</span></div><span className="room-tag"><Icon name="room" size={15} />{room}</span><Icon name="chevron" size={18} /></div>
-}
+function ExamForm({ close, initial, rooms, onSaved }: { close: () => void; initial: Exam | null; rooms: Room[]; onSaved: () => void }) {
+  const [subjectName, setSubjectName] = useState(initial?.subject_name || 'Génie Logiciel')
+  const [department, setDepartment] = useState(initial?.department || 'Génie Logiciel')
+  const [groupName, setGroupName] = useState(initial?.group_name || 'GL3')
+  const [examDate, setExamDate] = useState(initial?.exam_date || '2025-06-03')
+  const [startTime, setStartTime] = useState(initial?.start_time?.slice(0, 5) || '08:30')
+  const [duration, setDuration] = useState(String(initial?.duration_minutes || 90))
+  const [roomName, setRoomName] = useState(initial?.room_name || (rooms[0]?.name ?? 'Amphi A'))
+  const [statusVal, setStatusVal] = useState(initial?.status || 'Planifié')
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
-const examRows = [
-  ['Génie Logiciel', '03 Juin 2025', '08:30', '1h30', 'Amphi A', 'GL3', 'Planifié'],
-  ['Bases de Données', '03 Juin 2025', '10:30', '2h00', 'Salle B12', 'L2 INFO', 'En cours'],
-  ['Réseaux Avancés', '03 Juin 2025', '14:00', '1h30', 'Salle C04', 'RT3', 'Planifié'],
-  ['Systèmes Distribués', '04 Juin 2025', '09:00', '2h00', 'Amphi B', 'GL3', 'Planifié'],
-  ['Intelligence Artificielle', '04 Juin 2025', '13:30', '1h30', 'Salle A08', 'DS2', 'Terminé'],
-  ['Sécurité Informatique', '05 Juin 2025', '11:00', '1h30', 'Salle B06', 'RT2', 'Annulé'],
-]
+  const save = async () => {
+    setSaving(true)
+    setError(null)
+    try {
+      const payload = {
+        subject_name: subjectName,
+        department,
+        group_name: groupName,
+        exam_date: examDate,
+        start_time: `${startTime}:00`,
+        duration_minutes: Number(duration),
+        room_name: roomName,
+        status: statusVal,
+      }
+      if (initial) {
+        await updateExam(initial.id, payload)
+      } else {
+        await createExam(payload)
+      }
+      onSaved()
+      close()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Erreur lors de la sauvegarde')
+    } finally {
+      setSaving(false)
+    }
+  }
 
-function ExamTable({ onEdit }: { onEdit: () => void }) {
-  return <div className="table-wrap"><table><thead><tr><th>Matière</th><th>Date</th><th>Heure</th><th>Durée</th><th>Salle</th><th>Groupe</th><th>Statut</th><th /></tr></thead><tbody>{examRows.map((row) => <tr key={row[0]}>{row.slice(0, 6).map((cell, index) => <td key={cell}>{index === 0 ? <div className="subject-cell"><span>{cell.slice(0, 2).toUpperCase()}</span><b>{cell}</b></div> : cell}</td>)}<td><Badge status={row[6]} /></td><td><div className="row-actions"><button className="icon-button" onClick={onEdit}><Icon name="edit" size={17} /></button><button className="icon-button danger"><Icon name="trash" size={17} /></button></div></td></tr>)}</tbody></table></div>
-}
-
-function ExamForm({ close, edit = false }: { close: () => void; edit?: boolean }) {
-  return <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && close()}><div className="modal"><div className="modal-head"><div><h2>{edit ? 'Modifier l’examen' : 'Nouvel examen'}</h2><p>Renseignez les informations du créneau.</p></div><button className="icon-button" onClick={close}><Icon name="close" /></button></div><div className="form-grid"><Select label="Matière"><option>Génie Logiciel</option><option>Bases de Données</option><option>Réseaux Avancés</option></Select><Select label="Groupe"><option>GL3</option><option>L2 INFO</option><option>RT3</option></Select><Input label="Date" type="date" defaultValue="2025-06-03" /><Input label="Heure" type="time" defaultValue="08:30" /><Select label="Durée"><option>1h30</option><option>2h00</option><option>3h00</option></Select><Select label="Salle"><option>Amphi A</option><option>Salle B12</option><option>Salle C04</option></Select></div><div className="modal-note"><Icon name="check" size={18} /> Aucun conflit détecté pour ce créneau.</div><div className="modal-actions"><Button variant="secondary" onClick={close}>Annuler</Button><Button onClick={close}>{edit ? 'Enregistrer' : 'Créer l’examen'}</Button></div></div></div>
+  return <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && close()}><div className="modal"><div className="modal-head"><div><h2>{initial ? 'Modifier l’examen' : 'Nouvel examen'}</h2><p>Renseignez les informations du créneau.</p></div><button className="icon-button" onClick={close}><Icon name="close" /></button></div><div className="form-grid"><Input label="Matière" value={subjectName} onChange={setSubjectName} /><Input label="Département" value={department} onChange={setDepartment} /><Input label="Groupe" value={groupName} onChange={setGroupName} /><Input label="Date" type="date" value={examDate} onChange={setExamDate} /><Input label="Heure" type="time" value={startTime} onChange={setStartTime} /><Select label="Durée" value={duration} onChange={setDuration}><option value="90">1h30</option><option value="120">2h00</option><option value="180">3h00</option></Select><Select label="Salle" value={roomName} onChange={setRoomName}>{rooms.map((r) => <option key={r.id} value={r.name}>{r.name}</option>)}</Select><Select label="Statut" value={statusVal} onChange={setStatusVal}><option>Planifié</option><option>En cours</option><option>Terminé</option><option>Annulé</option></Select></div>{error ? <div className="warning-banner"><Icon name="warning" /><div><b>Erreur</b><span>{error}</span></div></div> : <div className="modal-note"><Icon name="check" size={18} /> Prêt à enregistrer ce créneau.</div>}<div className="modal-actions"><Button variant="secondary" onClick={close}>Annuler</Button><Button onClick={save} disabled={saving}>{saving ? 'Enregistrement...' : initial ? 'Enregistrer' : 'Créer l’examen'}</Button></div></div></div>
 }
 
 function Exams() {
-  const [modal, setModal] = useState<'new' | 'edit' | null>(null)
-  return <div className="page-stack"><div className="toolbar"><div className="toolbar-filters"><div className="search-field"><Icon name="search" size={18} /><input placeholder="Rechercher une matière..." /></div><select><option>Tous les statuts</option><option>Planifié</option><option>En cours</option><option>Terminé</option></select><select><option>Tous les départements</option><option>Génie Logiciel</option><option>Réseaux</option></select></div><Button icon="plus" onClick={() => setModal('new')}>Nouvel examen</Button></div><section className="card table-card"><div className="table-title"><div><h2>Liste des examens</h2><p>48 examens trouvés</p></div><Button variant="secondary" icon="download">Exporter</Button></div><ExamTable onEdit={() => setModal('edit')} /><div className="pagination"><span>Affichage de 1 à 6 sur 48</span><div><button disabled>‹</button><button className="active">1</button><button>2</button><button>3</button><button>…</button><button>8</button><button>›</button></div></div></section>{modal && <ExamForm close={() => setModal(null)} edit={modal === 'edit'} />}</div>
-}
+  const [exams, setExams] = useState<Exam[]>([])
+  const [rooms, setRooms] = useState<Room[]>([])
+  const [search, setSearch] = useState('')
+  const [statusFilter, setStatusFilter] = useState('Tous les statuts')
+  const [deptFilter, setDeptFilter] = useState('Tous les départements')
+  const [modal, setModal] = useState<{ open: boolean; exam: Exam | null }>({ open: false, exam: null })
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
 
-const times = ['08:30', '10:30', '12:30', '14:30']
-const days = ['Lun. 03', 'Mar. 04', 'Mer. 05', 'Jeu. 06', 'Ven. 07']
-const calendarEvents: Record<string, { title: string; room: string; color: string }[]> = {
-  '0-0': [{ title: 'Génie Logiciel', room: 'Amphi A · GL3', color: 'blue' }],
-  '0-1': [{ title: 'Bases de Données', room: 'B12 · L2 INFO', color: 'teal' }],
-  '0-3': [{ title: 'Réseaux Avancés', room: 'C04 · RT3', color: 'amber' }],
-  '1-0': [{ title: 'Systèmes Distribués', room: 'Amphi B · GL3', color: 'violet' }],
-  '1-2': [{ title: 'Intelligence Artificielle', room: 'A08 · DS2', color: 'blue' }],
-  '2-1': [{ title: 'Sécurité Informatique', room: 'B06 · RT2', color: 'teal' }],
-  '3-0': [{ title: 'Cloud Computing', room: 'C02 · GL3', color: 'amber' }],
-  '4-2': [{ title: 'Architecture SOA', room: 'Amphi A · GL3', color: 'violet' }],
-}
+  const load = useCallback(() => {
+    setLoading(true)
+    Promise.all([
+      getExams({ search, status: statusFilter, department: deptFilter }),
+      getRooms(),
+    ])
+      .then(([ex, rm]) => { setExams(ex); setRooms(rm); setError(null) })
+      .catch((e) => setError(e instanceof Error ? e.message : 'Erreur'))
+      .finally(() => setLoading(false))
+  }, [search, statusFilter, deptFilter])
 
-function PlanningCalendar() {
-  return <div className="calendar-scroll"><div className="calendar-grid"><div className="calendar-corner">GMT+1</div>{days.map((day) => <div className="calendar-day" key={day}>{day}</div>)}{times.map((time, row) => <div className="calendar-row" key={time}><div className="calendar-time">{time}</div>{days.map((day, col) => <div className="calendar-cell" key={day}>{(calendarEvents[`${col}-${row}`] || []).map((event) => <div className={`calendar-event ${event.color}`} key={event.title}><b>{event.title}</b><span>{event.room}</span></div>)}</div>)}</div>)}</div></div>
+  useEffect(() => { load() }, [load])
+
+  const handleDelete = async (id: number) => {
+    try {
+      await deleteExam(id)
+      load()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Erreur suppression')
+    }
+  }
+
+  return <div className="page-stack">
+    <div className="toolbar">
+      <div className="toolbar-filters">
+        <div className="search-field"><Icon name="search" size={18} /><input placeholder="Rechercher une matière..." value={search} onChange={(e) => setSearch(e.target.value)} /></div>
+        <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}><option>Tous les statuts</option><option>Planifié</option><option>En cours</option><option>Terminé</option><option>Annulé</option></select>
+        <select value={deptFilter} onChange={(e) => setDeptFilter(e.target.value)}><option>Tous les départements</option><option>Génie Logiciel</option><option>Informatique</option><option>Réseaux</option></select>
+      </div>
+      <Button icon="plus" onClick={() => setModal({ open: true, exam: null })}>Nouvel examen</Button>
+    </div>
+    {error && <div className="warning-banner"><Icon name="warning" /><div><b>Erreur</b><span>{error}</span></div></div>}
+    <section className="card table-card">
+      <div className="table-title"><div><h2>Liste des examens</h2><p>{loading ? 'Chargement...' : `${exams.length} examens trouvés`}</p></div></div>
+      <div className="table-wrap">
+        <table>
+          <thead><tr><th>Matière</th><th>Date</th><th>Heure</th><th>Durée</th><th>Salle</th><th>Groupe</th><th>Statut</th><th /></tr></thead>
+          <tbody>
+            {exams.map((ex) => (
+              <tr key={ex.id}>
+                <td><div className="subject-cell"><span>{ex.subject_name.slice(0, 2).toUpperCase()}</span><b>{ex.subject_name}</b></div></td>
+                <td>{ex.exam_date}</td>
+                <td>{ex.start_time.slice(0, 5)}</td>
+                <td>{formatDuration(ex.duration_minutes)}</td>
+                <td>{ex.room_name}</td>
+                <td>{ex.group_name}</td>
+                <td><Badge status={ex.status} /></td>
+                <td><div className="row-actions"><button className="icon-button" onClick={() => setModal({ open: true, exam: ex })}><Icon name="edit" size={17} /></button><button className="icon-button danger" onClick={() => handleDelete(ex.id)}><Icon name="trash" size={17} /></button></div></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
+    {modal.open && <ExamForm close={() => setModal({ open: false, exam: null })} initial={modal.exam} rooms={rooms} onSaved={load} />}
+  </div>
 }
 
 function Planning() {
-  return <div className="page-stack"><div className="warning-banner"><Icon name="warning" /><div><b>2 conflits détectés</b><span>Chevauchement de salle ou de surveillant dans le planning actuel.</span></div><button>Examiner les conflits</button></div><section className="card calendar-card"><div className="calendar-toolbar"><div className="segmented"><button className="active">Semaine</button><button>Mois</button></div><div className="calendar-nav"><button className="icon-button">‹</button><b>03 – 07 Juin 2025</b><button className="icon-button">›</button></div><Button variant="secondary" icon="download">Exporter</Button></div><PlanningCalendar /></section></div>
-}
+  const [exams, setExams] = useState<Exam[]>([])
+  const [conflicts, setConflicts] = useState<ConflictItem[]>([])
+  const [showConflicts, setShowConflicts] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
-const rooms = [
-  { name: 'Amphi A', building: 'Bâtiment principal · RDC', cap: 120, available: true, used: 78 },
-  { name: 'Amphi B', building: 'Bâtiment principal · 1er étage', cap: 100, available: true, used: 62 },
-  { name: 'Salle B12', building: 'Bloc B · 1er étage', cap: 64, available: false, used: 92 },
-  { name: 'Salle C04', building: 'Bloc C · RDC', cap: 48, available: true, used: 45 },
-  { name: 'Salle A08', building: 'Bloc A · 2ème étage', cap: 36, available: true, used: 55 },
-  { name: 'Salle B06', building: 'Bloc B · RDC', cap: 42, available: false, used: 88 },
-]
+  useEffect(() => {
+    getPlanning()
+      .then((res) => { setExams(res.exams); setConflicts(res.conflicts) })
+      .catch((e) => setError(e instanceof Error ? e.message : 'Erreur planning'))
+  }, [])
 
-function RoomCard({ room }: { room: typeof rooms[number] }) {
-  return <article className="card room-card"><div className="room-card-head"><span className="room-icon"><Icon name="room" /></span><Badge status={room.available ? 'Disponible' : 'Occupée'} /></div><h3>{room.name}</h3><p>{room.building}</p><div className="room-cap"><span><Icon name="people" size={17} /> Capacité</span><b>{room.cap} places</b></div><div className="usage"><div><span>Taux d’occupation</span><b>{room.used}%</b></div><div className="progress"><i style={{ width: `${room.used}%` }} /></div></div><div className="room-actions"><Button variant="secondary" icon="edit">Modifier</Button><button className="icon-button danger"><Icon name="trash" size={18} /></button></div></article>
+  const times = ['08:30', '10:30', '12:30', '14:00']
+  const dates = Array.from(new Set(exams.map((e) => e.exam_date))).slice(0, 5)
+  const days = dates.length > 0 ? dates : ['2025-06-03', '2025-06-04', '2025-06-05']
+  const colors = ['blue', 'teal', 'amber', 'violet']
+
+  return <div className="page-stack">
+    {error && <div className="warning-banner"><Icon name="warning" /><div><b>Erreur</b><span>{error}</span></div></div>}
+    {conflicts.length > 0 && (
+      <div className="warning-banner">
+        <Icon name="warning" />
+        <div><b>{conflicts.length} conflit{conflicts.length > 1 ? 's' : ''} détecté{conflicts.length > 1 ? 's' : ''}</b><span>{conflicts[0].message}</span></div>
+        <button onClick={() => setShowConflicts((v) => !v)}>{showConflicts ? 'Masquer' : 'Examiner les conflits'}</button>
+      </div>
+    )}
+    {showConflicts && conflicts.length > 0 && (
+      <div className="toast"><span><Icon name="warning" /></span><div><b>Détails des conflits</b><p>{conflicts.map((c) => c.message).join(' | ')}</p></div><button onClick={() => setShowConflicts(false)}>×</button></div>
+    )}
+    <section className="card calendar-card">
+      <div className="calendar-toolbar"><div className="segmented"><button className="active">Semaine</button></div><div className="calendar-nav"><b>Session Principale 2025</b></div></div>
+      <div className="calendar-scroll">
+        <div className="calendar-grid">
+          <div className="calendar-corner">GMT+1</div>
+          {days.map((day) => <div className="calendar-day" key={day}>{day}</div>)}
+          {times.map((slot) => (
+            <div className="calendar-row" key={slot}>
+              <div className="calendar-time">{slot}</div>
+              {days.map((day) => {
+                const slotHour = Number(slot.split(':')[0])
+                const matching = exams.filter((e) => e.exam_date === day && Math.abs(Number(e.start_time.split(':')[0]) - slotHour) <= 1)
+                return <div className="calendar-cell" key={`${day}-${slot}`}>{matching.map((ev, i) => <div className={`calendar-event ${colors[i % colors.length]}`} key={ev.id}><b>{ev.subject_name}</b><span>{ev.room_name} · {ev.group_name}</span></div>)}</div>
+              })}
+            </div>
+          ))}
+        </div>
+      </div>
+    </section>
+  </div>
 }
 
 function Rooms() {
+  const [rooms, setRooms] = useState<Room[]>([])
+  const [search, setSearch] = useState('')
   const [showForm, setShowForm] = useState(false)
-  return <div className="page-stack"><div className="toolbar"><div className="search-field"><Icon name="search" size={18} /><input placeholder="Rechercher une salle..." /></div><Button icon="plus" onClick={() => setShowForm(true)}>Ajouter une salle</Button></div><div className="rooms-grid">{rooms.map((room) => <RoomCard key={room.name} room={room} />)}</div>{showForm && <div className="modal-backdrop"><div className="modal compact"><div className="modal-head"><div><h2>Ajouter une salle</h2><p>Créez un nouvel espace d’examen.</p></div><button className="icon-button" onClick={() => setShowForm(false)}><Icon name="close" /></button></div><div className="form-grid"><Input label="Nom de la salle" placeholder="Ex. Salle C12" /><Input label="Capacité" type="number" placeholder="50" /><Input label="Bâtiment" placeholder="Ex. Bloc C" /><Input label="Étage" placeholder="Ex. 1er étage" /></div><div className="modal-actions"><Button variant="secondary" onClick={() => setShowForm(false)}>Annuler</Button><Button onClick={() => setShowForm(false)}>Créer la salle</Button></div></div></div>}</div>
+  const [name, setName] = useState('')
+  const [capacity, setCapacity] = useState('50')
+  const [building, setBuilding] = useState('')
+  const [floor, setFloor] = useState('RDC')
+  const [error, setError] = useState<string | null>(null)
+
+  const load = useCallback(() => {
+    getRooms(search).then(setRooms).catch((e) => setError(e instanceof Error ? e.message : 'Erreur'))
+  }, [search])
+
+  useEffect(() => { load() }, [load])
+
+  const handleCreate = async () => {
+    try {
+      await createRoom({ name, building, floor, capacity: Number(capacity), available: true, usage_rate: 0 })
+      setShowForm(false)
+      setName('')
+      setBuilding('')
+      load()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Erreur création salle')
+    }
+  }
+
+  return <div className="page-stack">
+    <div className="toolbar"><div className="search-field"><Icon name="search" size={18} /><input placeholder="Rechercher une salle..." value={search} onChange={(e) => setSearch(e.target.value)} /></div><Button icon="plus" onClick={() => setShowForm(true)}>Ajouter une salle</Button></div>
+    {error && <div className="warning-banner"><Icon name="warning" /><div><b>Erreur</b><span>{error}</span></div></div>}
+    <div className="rooms-grid">
+      {rooms.map((room) => (
+        <article className="card room-card" key={room.id}>
+          <div className="room-card-head"><span className="room-icon"><Icon name="room" /></span><Badge status={room.available ? 'Disponible' : 'Occupée'} /></div>
+          <h3>{room.name}</h3><p>{room.building} · {room.floor}</p>
+          <div className="room-cap"><span><Icon name="people" size={17} /> Capacité</span><b>{room.capacity} places</b></div>
+          <div className="usage"><div><span>Taux d’occupation</span><b>{room.usage_rate}%</b></div><div className="progress"><i style={{ width: `${room.usage_rate}%` }} /></div></div>
+          <div className="room-actions"><button className="icon-button danger" onClick={() => deleteRoom(room.id).then(load)}><Icon name="trash" size={18} /></button></div>
+        </article>
+      ))}
+    </div>
+    {showForm && <div className="modal-backdrop"><div className="modal compact"><div className="modal-head"><div><h2>Ajouter une salle</h2><p>Créez un nouvel espace d’examen.</p></div><button className="icon-button" onClick={() => setShowForm(false)}><Icon name="close" /></button></div><div className="form-grid"><Input label="Nom de la salle" placeholder="Ex. Salle C12" value={name} onChange={setName} /><Input label="Capacité" type="number" value={capacity} onChange={setCapacity} /><Input label="Bâtiment" placeholder="Ex. Bloc C" value={building} onChange={setBuilding} /><Input label="Étage" placeholder="Ex. 1er étage" value={floor} onChange={setFloor} /></div><div className="modal-actions"><Button variant="secondary" onClick={() => setShowForm(false)}>Annuler</Button><Button onClick={handleCreate}>Créer la salle</Button></div></div></div>}
+  </div>
 }
 
 function Subjects() {
   const [tab, setTab] = useState<'subjects' | 'groups'>('subjects')
-  const data = tab === 'subjects'
-    ? [['GL301', 'Génie Logiciel', 'Mme. Leïla Trabelsi', 'GL3', '6 ECTS'], ['BD202', 'Bases de Données', 'M. Sami Gharbi', 'L2 INFO', '5 ECTS'], ['RES305', 'Réseaux Avancés', 'M. Walid Mansour', 'RT3', '4 ECTS'], ['SYS310', 'Systèmes Distribués', 'Mme. Ons Khelifi', 'GL3', '5 ECTS']]
-    : [['GL3-A', '3ème année GL · Groupe A', '32 étudiants', '2024/2025', 'Actif'], ['GL3-B', '3ème année GL · Groupe B', '30 étudiants', '2024/2025', 'Actif'], ['L2-INFO-A', '2ème année Informatique', '34 étudiants', '2024/2025', 'Actif'], ['RT3', '3ème année Réseaux', '42 étudiants', '2024/2025', 'Actif']]
-  return <div className="page-stack"><div className="tabs"><button className={tab === 'subjects' ? 'active' : ''} onClick={() => setTab('subjects')}>Matières <span>36</span></button><button className={tab === 'groups' ? 'active' : ''} onClick={() => setTab('groups')}>Groupes <span>12</span></button></div><div className="toolbar"><div className="search-field"><Icon name="search" size={18} /><input placeholder={`Rechercher ${tab === 'subjects' ? 'une matière' : 'un groupe'}...`} /></div><Button icon="plus">Ajouter {tab === 'subjects' ? 'une matière' : 'un groupe'}</Button></div><section className="card table-card"><div className="table-title"><div><h2>{tab === 'subjects' ? 'Catalogue des matières' : 'Liste des groupes'}</h2><p>Année universitaire 2024/2025</p></div></div><div className="table-wrap"><table><thead><tr>{(tab === 'subjects' ? ['Code', 'Matière', 'Responsable', 'Niveau', 'Crédits'] : ['Code', 'Intitulé', 'Effectif', 'Année', 'Statut']).map((h) => <th key={h}>{h}</th>)}<th /></tr></thead><tbody>{data.map((row) => <tr key={row[0]}>{row.map((cell, i) => <td key={cell}>{i === 0 ? <b className="code">{cell}</b> : i === 4 && tab === 'groups' ? <Badge status={cell} /> : cell}</td>)}<td><div className="row-actions"><button className="icon-button"><Icon name="edit" size={17} /></button><button className="icon-button danger"><Icon name="trash" size={17} /></button></div></td></tr>)}</tbody></table></div></section></div>
+  const [subjects, setSubjects] = useState<Subject[]>([])
+  const [groups, setGroups] = useState<Group[]>([])
+  const [search, setSearch] = useState('')
+
+  useEffect(() => {
+    Promise.all([getSubjects(), getGroups()]).then(([s, g]) => { setSubjects(s); setGroups(g) })
+  }, [])
+
+  const filteredSubjects = subjects.filter((s) => s.name.toLowerCase().includes(search.toLowerCase()) || s.code.toLowerCase().includes(search.toLowerCase()))
+  const filteredGroups = groups.filter((g) => g.name.toLowerCase().includes(search.toLowerCase()) || g.code.toLowerCase().includes(search.toLowerCase()))
+
+  return <div className="page-stack">
+    <div className="tabs"><button className={tab === 'subjects' ? 'active' : ''} onClick={() => setTab('subjects')}>Matières <span>{subjects.length}</span></button><button className={tab === 'groups' ? 'active' : ''} onClick={() => setTab('groups')}>Groupes <span>{groups.length}</span></button></div>
+    <div className="toolbar"><div className="search-field"><Icon name="search" size={18} /><input placeholder={`Rechercher ${tab === 'subjects' ? 'une matière' : 'un groupe'}...`} value={search} onChange={(e) => setSearch(e.target.value)} /></div></div>
+    <section className="card table-card">
+      <div className="table-title"><div><h2>{tab === 'subjects' ? 'Catalogue des matières' : 'Liste des groupes'}</h2><p>Année universitaire 2024/2025</p></div></div>
+      <div className="table-wrap">
+        <table>
+          <thead><tr>{(tab === 'subjects' ? ['Code', 'Matière', 'Responsable', 'Niveau', 'Crédits'] : ['Code', 'Intitulé', 'Effectif', 'Année', 'Statut']).map((h) => <th key={h}>{h}</th>)}</tr></thead>
+          <tbody>
+            {tab === 'subjects'
+              ? filteredSubjects.map((s) => <tr key={s.id}><td><b className="code">{s.code}</b></td><td>{s.name}</td><td>{s.teacher_name}</td><td>{s.level}</td><td>{s.credits} ECTS</td></tr>)
+              : filteredGroups.map((g) => <tr key={g.id}><td><b className="code">{g.code}</b></td><td>{g.name}</td><td>{g.student_count} étudiants</td><td>{g.academic_year}</td><td><Badge status={g.status} /></td></tr>)}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </div>
 }
 
-const teachers = ['Leïla Trabelsi', 'Sami Gharbi', 'Walid Mansour', 'Ons Khelifi', 'Nizar Ben Salah']
 function Supervisors() {
-  const [assigned, setAssigned] = useState<Record<number, string[]>>({ 0: ['Leïla Trabelsi'], 1: ['Sami Gharbi', 'Ons Khelifi'] })
-  const add = (index: number, teacher: string) => setAssigned((current) => ({ ...current, [index]: [...(current[index] || []).filter((t) => t !== teacher), teacher] }))
-  return <div className="assignment-layout"><aside className="card teacher-pool"><div className="section-head"><div><h2>Enseignants</h2><p>5 disponibles</p></div></div><div className="search-field"><Icon name="search" size={17} /><input placeholder="Rechercher..." /></div><div className="teacher-list">{teachers.map((teacher, index) => <div className="teacher-chip" key={teacher} draggable onDragStart={(e) => e.dataTransfer.setData('teacher', teacher)}><Avatar name={teacher} color={index % 2 ? 'teal' : 'blue'} /><div><b>{teacher}</b><span>{index % 2 ? 'Réseaux' : 'Génie Logiciel'}</span></div><i>⠿</i></div>)}</div><p className="drag-help">Glissez un enseignant vers un examen.</p></aside><section className="card assignment-board"><div className="section-head"><div><h2>Examens du 03 Juin</h2><p>3 créneaux · 4 surveillants requis</p></div><Badge status="3 / 4 affectés" /></div>{examRows.slice(0, 3).map((exam, index) => <div className="exam-slot" key={exam[0]} onDragOver={(e) => e.preventDefault()} onDrop={(e) => add(index, e.dataTransfer.getData('teacher'))}><div className="slot-info"><span>{exam[2]}</span><div><b>{exam[0]}</b><small>{exam[4]} · {exam[5]}</small></div></div><div className="slot-people">{(assigned[index] || []).map((person) => <span key={person}><Avatar name={person} /><b>{person}</b><button onClick={() => setAssigned((a) => ({ ...a, [index]: a[index].filter((p) => p !== person) }))}>×</button></span>)}<div className="drop-zone"><Icon name="plus" size={17} /> Déposer ici</div></div></div>)}</section></div>
+  const [teachers, setTeachers] = useState<Teacher[]>([])
+  const [exams, setExams] = useState<Exam[]>([])
+  const [assignments, setAssignments] = useState<SupervisorAssignment[]>([])
+
+  const load = useCallback(() => {
+    Promise.all([getTeachers(), getExams(), getSupervisors()]).then(([t, e, a]) => {
+      setTeachers(t); setExams(e); setAssignments(a)
+    })
+  }, [])
+
+  useEffect(() => { load() }, [load])
+
+  const handleDrop = async (examId: number, teacherIdStr: string) => {
+    const teacherId = Number(teacherIdStr)
+    if (!teacherId) return
+    await assignSupervisor(examId, teacherId)
+    load()
+  }
+
+  return <div className="assignment-layout">
+    <aside className="card teacher-pool">
+      <div className="section-head"><div><h2>Enseignants</h2><p>{teachers.length} disponibles</p></div></div>
+      <div className="teacher-list">
+        {teachers.map((teacher, index) => (
+          <div className="teacher-chip" key={teacher.id} draggable onDragStart={(e) => e.dataTransfer.setData('teacherId', String(teacher.id))}>
+            <Avatar name={teacher.full_name} color={index % 2 ? 'teal' : 'blue'} />
+            <div><b>{teacher.full_name}</b><span>{teacher.department}</span></div>
+            <i>⠿</i>
+          </div>
+        ))}
+      </div>
+      <p className="drag-help">Glissez un enseignant vers un examen.</p>
+    </aside>
+    <section className="card assignment-board">
+      <div className="section-head"><div><h2>Créneaux d’examen</h2><p>{exams.length} examens</p></div><Badge status={`${assignments.length} affectés`} /></div>
+      {exams.map((exam) => {
+        const examSup = assignments.filter((a) => a.exam_id === exam.id)
+        return (
+          <div className="exam-slot" key={exam.id} onDragOver={(e) => e.preventDefault()} onDrop={(e) => handleDrop(exam.id, e.dataTransfer.getData('teacherId'))}>
+            <div className="slot-info"><span>{exam.start_time.slice(0, 5)}</span><div><b>{exam.subject_name}</b><small>{exam.room_name} · {exam.group_name}</small></div></div>
+            <div className="slot-people">
+              {examSup.map((sup) => <span key={sup.id}><Avatar name={sup.teacher_name} /><b>{sup.teacher_name}</b><button onClick={() => removeSupervisor(sup.id).then(load)}>×</button></span>)}
+              <div className="drop-zone"><Icon name="plus" size={17} /> Déposer ici</div>
+            </div>
+          </div>
+        )
+      })}
+    </section>
+  </div>
 }
 
-const students = [
-  ['2201843', 'Ben Amor Yasmine', '14.50'], ['2201921', 'Chaabane Aziz', '12.75'], ['2201756', 'Gharbi Mariem', '16.25'], ['2202014', 'Jebali Rayen', '09.50'], ['2201888', 'Mansour Inès', '15.00'], ['2201965', 'Trabelsi Mohamed', '11.25'],
-]
 function Grades() {
-  const [published, setPublished] = useState(false)
-  return <div className="page-stack"><div className="grade-summary"><div className="card"><span>Moyenne de la classe</span><b>13.21 <small>/ 20</small></b></div><div className="card"><span>Meilleure note</span><b>17.75 <small>/ 20</small></b></div><div className="card"><span>Taux de réussite</span><b>84.4 <small>%</small></b></div></div><div className="toolbar"><div className="search-field"><Icon name="search" size={18} /><input placeholder="Rechercher un étudiant..." /></div><div className="button-group"><Button variant="secondary" icon="upload">Importer CSV</Button><Button icon="check" onClick={() => setPublished(true)}>Publier les notes</Button></div></div>{published && <div className="toast"><span><Icon name="check" /></span><div><b>Notes publiées</b><p>Les étudiants ont été notifiés.</p></div><button onClick={() => setPublished(false)}>×</button></div>}<section className="card table-card"><div className="table-title"><div><h2>Liste des étudiants</h2><p>32 étudiants inscrits</p></div><Badge status="Brouillon" /></div><div className="table-wrap"><table><thead><tr><th>Matricule</th><th>Étudiant</th><th>Note / 20</th><th>Statut</th><th>Appréciation</th></tr></thead><tbody>{students.map((student) => <tr key={student[0]}><td><b className="code">{student[0]}</b></td><td><div className="student-cell"><Avatar name={student[1]} /><b>{student[1]}</b></div></td><td><input className="grade-input" type="number" defaultValue={student[2]} min="0" max="20" /></td><td><Badge status={Number(student[2]) >= 10 ? 'Admis' : 'Ajourné'} /></td><td>{Number(student[2]) >= 16 ? 'Très bien' : Number(student[2]) >= 14 ? 'Bien' : Number(student[2]) >= 12 ? 'Assez bien' : Number(student[2]) >= 10 ? 'Passable' : 'Insuffisant'}</td></tr>)}</tbody></table></div></section></div>
+  const [grades, setGrades] = useState<Grade[]>([])
+  const [stats, setStats] = useState<GradeStats>({ count: 0, average: 0, highest: 0, pass_rate: 0 })
+  const [search, setSearch] = useState('')
+  const [publishedToast, setPublishedToast] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const fileRef = useRef<HTMLInputElement>(null)
+
+  const load = useCallback(() => {
+    Promise.all([getGrades(), getGradeStats()])
+      .then(([g, s]) => { setGrades(g); setStats(s); setError(null) })
+      .catch((e) => setError(e instanceof Error ? e.message : 'Erreur notes'))
+  }, [])
+
+  useEffect(() => { load() }, [load])
+
+  const handleScoreChange = async (id: number, raw: string) => {
+    const val = Number(raw)
+    if (Number.isNaN(val) || val < 0 || val > 20) return
+    await updateGradeScore(id, val)
+    load()
+  }
+
+  const handlePublish = async () => {
+    await publishGrades()
+    setPublishedToast(true)
+    load()
+  }
+
+  const handleCsv = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    await importGradesCsv(1, 'Génie Logiciel', file)
+    load()
+  }
+
+  const filtered = grades.filter((g) => g.student_name.toLowerCase().includes(search.toLowerCase()) || g.student_matricule.includes(search))
+  const allPublished = grades.length > 0 && grades.every((g) => g.published)
+
+  return <div className="page-stack">
+    <div className="grade-summary"><div className="card"><span>Moyenne de la classe</span><b>{stats.average.toFixed(2)} <small>/ 20</small></b></div><div className="card"><span>Meilleure note</span><b>{stats.highest.toFixed(2)} <small>/ 20</small></b></div><div className="card"><span>Taux de réussite</span><b>{stats.pass_rate.toFixed(1)} <small>%</small></b></div></div>
+    <div className="toolbar">
+      <div className="search-field"><Icon name="search" size={18} /><input placeholder="Rechercher un étudiant..." value={search} onChange={(e) => setSearch(e.target.value)} /></div>
+      <div className="button-group">
+        <input ref={fileRef} type="file" accept=".csv" style={{ display: 'none' }} onChange={handleCsv} />
+        <Button variant="secondary" icon="upload" onClick={() => fileRef.current?.click()}>Importer CSV</Button>
+        <Button icon="check" onClick={handlePublish}>Publier les notes</Button>
+      </div>
+    </div>
+    {error && <div className="warning-banner"><Icon name="warning" /><div><b>Erreur</b><span>{error}</span></div></div>}
+    {publishedToast && <div className="toast"><span><Icon name="check" /></span><div><b>Notes publiées</b><p>Les étudiants ont été notifiés.</p></div><button onClick={() => setPublishedToast(false)}>×</button></div>}
+    <section className="card table-card">
+      <div className="table-title"><div><h2>Liste des étudiants</h2><p>{filtered.length} notes enregistrées</p></div><Badge status={allPublished ? 'Publié' : 'Brouillon'} /></div>
+      <div className="table-wrap">
+        <table>
+          <thead><tr><th>Matricule</th><th>Étudiant</th><th>Matière</th><th>Note / 20</th><th>Statut</th><th>Appréciation</th></tr></thead>
+          <tbody>
+            {filtered.map((g) => (
+              <tr key={g.id}>
+                <td><b className="code">{g.student_matricule}</b></td>
+                <td><div className="student-cell"><Avatar name={g.student_name} /><b>{g.student_name}</b></div></td>
+                <td>{g.subject_name}</td>
+                <td><input className="grade-input" type="number" defaultValue={g.score} min="0" max="20" step="0.25" onBlur={(e) => handleScoreChange(g.id, e.target.value)} /></td>
+                <td><Badge status={g.score >= 10 ? 'Admis' : 'Ajourné'} /></td>
+                <td>{g.score >= 16 ? 'Très bien' : g.score >= 14 ? 'Bien' : g.score >= 12 ? 'Assez bien' : g.score >= 10 ? 'Passable' : 'Insuffisant'}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </div>
 }
 
-function StudentSpace() {
-  return <div className="page-stack"><section className="student-hero"><div><span>PROCHAIN EXAMEN</span><h2>Génie Logiciel</h2><p><Icon name="calendar" size={18} /> Mardi 03 Juin 2025 · 08:30</p><p><Icon name="room" size={18} /> Amphi A · Durée 1h30</p></div><div className="countdown"><span>Dans</span><b>04</b><small>jours</small></div></section><div className="student-grid"><section className="card"><div className="section-head"><div><h2>Mes prochains examens</h2><p>Session principale</p></div><Button variant="secondary" icon="download">Convocation PDF</Button></div><div className="student-exams"><ExamListItem time="08:30" title="Génie Logiciel" meta="03 Juin 2025" room="Amphi A" color="blue" /><ExamListItem time="10:30" title="Bases de Données" meta="05 Juin 2025" room="Salle B12" color="teal" /><ExamListItem time="14:00" title="Réseaux Avancés" meta="09 Juin 2025" room="Salle C04" color="amber" /></div></section><section className="card result-card"><div className="section-head"><div><h2>Mes résultats</h2><p>Semestre 2 · Publiés</p></div><Button variant="secondary" icon="download">Relevé</Button></div><div className="average"><div><span>Moyenne générale</span><b>14.28<small>/20</small></b></div><Badge status="Admis" /></div><div className="result-list"><span><b>Architecture logicielle</b><strong>16.25</strong></span><span><b>Développement Web</b><strong>14.50</strong></span><span><b>Cloud Computing</b><strong>12.75</strong></span></div></section></div></div>
+function StudentSpace({ user }: { user: AuthUser }) {
+  const [student, setStudent] = useState<Student | null>(null)
+  const [exams, setExams] = useState<Exam[]>([])
+  const [grades, setGrades] = useState<Grade[]>([])
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    Promise.all([getStudents(user.role === 'STUDENT' ? user.id : undefined), getExams()])
+      .then(async ([stList, exList]) => {
+        const st = stList[0] || null
+        setStudent(st)
+        setExams(exList)
+        if (st) {
+          const gr = await getGrades({ student_id: st.id, published_only: true })
+          setGrades(gr)
+        }
+      })
+      .catch((e) => setError(e instanceof Error ? e.message : 'Erreur espace étudiant'))
+  }, [user])
+
+  const avg = grades.length > 0 ? grades.reduce((acc, g) => acc + g.score, 0) / grades.length : 0
+  const nextExam = exams[0]
+  const colors = ['blue', 'teal', 'amber']
+
+  const handleConvocation = async () => {
+    if (!student || !nextExam) return
+    try {
+      await downloadConvocationPdf(student.id, nextExam.id)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Erreur convocation')
+    }
+  }
+
+  return <div className="page-stack">
+    {error && <div className="warning-banner"><Icon name="warning" /><div><b>Erreur</b><span>{error}</span></div></div>}
+    <section className="student-hero">
+      <div><span>PROCHAIN EXAMEN</span><h2>{nextExam?.subject_name || 'Aucun examen'}</h2><p><Icon name="calendar" size={18} /> {nextExam?.exam_date || '—'} · {nextExam?.start_time.slice(0, 5) || '—'}</p><p><Icon name="room" size={18} /> {nextExam?.room_name || '—'} · Durée {nextExam ? formatDuration(nextExam.duration_minutes) : '—'}</p></div>
+      <div className="countdown"><span>Session</span><b>04</b><small>examens</small></div>
+    </section>
+    <div className="student-grid">
+      <section className="card">
+        <div className="section-head"><div><h2>Mes prochains examens</h2><p>Session principale</p></div><Button variant="secondary" icon="download" onClick={handleConvocation} disabled={!student || !nextExam}>Convocation PDF</Button></div>
+        <div className="student-exams">{exams.slice(0, 4).map((e, i) => <ExamListItem key={e.id} time={e.start_time.slice(0, 5)} duration={formatDuration(e.duration_minutes)} title={e.subject_name} meta={e.exam_date} room={e.room_name} color={colors[i % colors.length]} />)}</div>
+      </section>
+      <section className="card result-card">
+        <div className="section-head"><div><h2>Mes résultats</h2><p>Semestre 2 · Publiés</p></div></div>
+        <div className="average"><div><span>Moyenne générale</span><b>{avg.toFixed(2)}<small>/20</small></b></div><Badge status={avg >= 10 ? 'Admis' : 'Ajourné'} /></div>
+        <div className="result-list">{grades.length === 0 ? <span><b>Aucune note publiée</b><strong>—</strong></span> : grades.map((g) => <span key={g.id}><b>{g.subject_name}</b><strong>{g.score.toFixed(2)}</strong></span>)}</div>
+      </section>
+    </div>
+  </div>
 }
 
-const notes = [
-  { title: 'Nouvel examen planifié', text: 'L’examen de Génie Logiciel a été planifié le 03 Juin à 08:30.', time: 'Il y a 12 min', icon: 'calendar' as IconName, unread: true },
-  { title: 'Conflit de planning détecté', text: 'La salle B12 est affectée à deux examens le 05 Juin à 10:30.', time: 'Il y a 34 min', icon: 'warning' as IconName, unread: true },
-  { title: 'Notes publiées', text: 'Les notes de Bases de Données ont été publiées par M. Sami Gharbi.', time: 'Il y a 2 h', icon: 'grade' as IconName, unread: true },
-  { title: 'Salle mise à jour', text: 'La capacité de l’Amphi A a été modifiée à 120 places.', time: 'Hier à 16:42', icon: 'room' as IconName, unread: false },
-  { title: 'Affectation terminée', text: 'Tous les surveillants du 03 Juin ont été affectés.', time: 'Hier à 11:20', icon: 'people' as IconName, unread: false },
-]
-function Notifications() {
-  const [readAll, setReadAll] = useState(false)
-  return <section className="card notifications-card"><div className="section-head"><div className="filter-pills"><button className="active">Toutes <span>5</span></button><button>Non lues <span>{readAll ? 0 : 3}</span></button></div><button className="text-button" onClick={() => setReadAll(true)}><Icon name="check" size={17} /> Tout marquer comme lu</button></div><div className="notification-list">{notes.map((note) => <article className={`${note.unread && !readAll ? 'unread' : ''}`} key={note.title}><span className={`notification-icon ${note.icon}`}><Icon name={note.icon} /></span><div><b>{note.title}</b><p>{note.text}</p><small>{note.time}</small></div>{note.unread && !readAll && <i />}</article>)}</div></section>
+function Notifications({ onChange }: { onChange: () => void }) {
+  const [items, setItems] = useState<NotificationItem[]>([])
+  const [unreadOnly, setUnreadOnly] = useState(false)
+
+  const load = useCallback(() => {
+    getNotifications().then((data) => { setItems(data); onChange() })
+  }, [onChange])
+
+  useEffect(() => { load() }, [load])
+
+  const visible = unreadOnly ? items.filter((n) => !n.is_read) : items
+  const unreadCount = items.filter((n) => !n.is_read).length
+
+  return <section className="card notifications-card">
+    <div className="section-head">
+      <div className="filter-pills">
+        <button className={!unreadOnly ? 'active' : ''} onClick={() => setUnreadOnly(false)}>Toutes <span>{items.length}</span></button>
+        <button className={unreadOnly ? 'active' : ''} onClick={() => setUnreadOnly(true)}>Non lues <span>{unreadCount}</span></button>
+      </div>
+      <button className="text-button" onClick={() => markAllNotificationsRead().then(load)}><Icon name="check" size={17} /> Tout marquer comme lu</button>
+    </div>
+    <div className="notification-list">
+      {visible.map((note) => (
+        <article className={!note.is_read ? 'unread' : ''} key={note.id} onClick={() => !note.is_read && markNotificationRead(note.id).then(load)}>
+          <span className={`notification-icon ${note.icon}`}><Icon name={(note.icon as IconName) || 'bell'} /></span>
+          <div><b>{note.title}</b><p>{note.message}</p><small>{new Date(note.created_at).toLocaleString()}</small></div>
+          {!note.is_read && <i />}
+        </article>
+      ))}
+    </div>
+  </section>
 }
 
-const services = [
-  { name: 'REST API', description: 'API principale ExamManager', latency: '42 ms', uptime: '99.98%', up: true, history: [1,1,1,1,1,1,1,1,1,1,1,1] },
-  { name: 'SOAP Service', description: 'Intégration système universitaire', latency: '118 ms', uptime: '99.72%', up: true, history: [1,1,1,1,0,1,1,1,1,1,1,1] },
-  { name: 'Microservices', description: 'Planning, notes & notifications', latency: '—', uptime: '98.44%', up: false, history: [1,1,1,1,1,1,1,1,1,0,0,0] },
-]
 function Services() {
-  return <div className="page-stack"><div className="system-banner"><span><Icon name="check" /></span><div><b>Systèmes opérationnels</b><p>2 services sur 3 fonctionnent normalement.</p></div><small>Dernière vérification : à l’instant</small></div><div className="services-grid">{services.map((service) => <article className="card service-card" key={service.name}><div className="service-head"><span className="service-icon"><Icon name="server" /></span><Badge status={service.up ? 'UP' : 'DOWN'} /></div><h3>{service.name}</h3><p>{service.description}</p><div className="service-metrics"><div><span>Latence</span><b className={service.up ? '' : 'down'}>{service.latency}</b></div><div><span>Disponibilité (30j)</span><b>{service.uptime}</b></div></div><div className="history"><span>Dernières 12 heures</span><div>{service.history.map((up, i) => <i key={i} className={up ? 'up' : 'down'} />)}</div></div></article>)}</div><section className="card incident-card"><div className="section-head"><div><h2>Incidents récents</h2><p>Historique des dernières 24 heures</p></div></div><div className="incident"><span className="incident-dot" /><div><b>Microservices — Dégradation en cours</b><p>Le service de notifications rencontre des délais de traitement.</p></div><small>Depuis 10:42</small></div><div className="incident resolved"><span className="incident-dot" /><div><b>SOAP Service — Incident résolu</b><p>Temps de réponse élevé pendant 6 minutes.</p></div><small>Hier, 18:12</small></div></section></div>
+  const [summary, setSummary] = useState<ServiceSummary[]>([])
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    getServicesStatus()
+      .then((res) => setSummary(res.summary))
+      .catch((e) => setError(e instanceof Error ? e.message : 'Erreur statut services'))
+  }, [])
+
+  const upCount = summary.filter((s) => s.up).length
+
+  return <div className="page-stack">
+    {error && <div className="warning-banner"><Icon name="warning" /><div><b>Erreur</b><span>{error}</span></div></div>}
+    <div className="system-banner"><span><Icon name="check" /></span><div><b>Systèmes opérationnels</b><p>{upCount} services sur {summary.length || 3} fonctionnent normalement.</p></div><small>Dernière vérification : à l’instant</small></div>
+    <div className="services-grid">
+      {summary.map((service) => (
+        <article className="card service-card" key={service.name}>
+          <div className="service-head"><span className="service-icon"><Icon name="server" /></span><Badge status={service.up ? 'UP' : 'DOWN'} /></div>
+          <h3>{service.name}</h3><p>{service.description}</p>
+          <div className="service-metrics"><div><span>Latence</span><b className={service.up ? '' : 'down'}>{service.latency}</b></div><div><span>Disponibilité (30j)</span><b>{service.uptime}</b></div></div>
+          <div className="history"><span>Dernières 12 heures</span><div>{Array.from({ length: 12 }).map((_, i) => <i key={i} className={service.up ? 'up' : 'down'} />)}</div></div>
+        </article>
+      ))}
+    </div>
+  </div>
 }
 
 export default function App() {
-  const [loggedIn, setLoggedIn] = useState(false)
-  const [role, setRole] = useState('Admin')
-  const [view, setView] = useState<View>('dashboard')
+  const [user, setUser] = useState<AuthUser | null>(() => (getToken() ? getStoredUser() : null))
+  const [view, setView] = useState<View>(() => {
+    const u = getStoredUser()
+    if (!u) return 'dashboard'
+    return u.role === 'STUDENT' ? 'student' : u.role === 'TEACHER' ? 'grades' : 'dashboard'
+  })
+  const [unreadCount, setUnreadCount] = useState(0)
+
+  const refreshUnread = useCallback(() => {
+    if (!getToken()) return
+    getNotifications(true).then((n) => setUnreadCount(n.length)).catch(() => {})
+  }, [])
+
+  useEffect(() => {
+    setUnauthorizedHandler(() => setUser(null))
+    if (user) refreshUnread()
+  }, [user, refreshUnread])
+
   const screen = useMemo(() => {
+    if (!user) return null
     switch (view) {
       case 'dashboard': return <Dashboard navigate={setView} />
       case 'exams': return <Exams />
@@ -333,11 +787,18 @@ export default function App() {
       case 'subjects': return <Subjects />
       case 'supervisors': return <Supervisors />
       case 'grades': return <Grades />
-      case 'student': return <StudentSpace />
-      case 'notifications': return <Notifications />
+      case 'student': return <StudentSpace user={user} />
+      case 'notifications': return <Notifications onChange={refreshUnread} />
       case 'services': return <Services />
     }
-  }, [view])
-  if (!loggedIn) return <Login onLogin={(selectedRole) => { setRole(selectedRole); setView(selectedRole === 'Étudiant' ? 'student' : selectedRole === 'Enseignant' ? 'grades' : 'dashboard'); setLoggedIn(true) }} />
-  return <AppShell view={view} setView={setView} role={role} logout={() => setLoggedIn(false)}>{screen}</AppShell>
+  }, [view, user, refreshUnread])
+
+  if (!user) {
+    return <Login onLogin={(u) => {
+      setUser(u)
+      setView(u.role === 'STUDENT' ? 'student' : u.role === 'TEACHER' ? 'grades' : 'dashboard')
+    }} />
+  }
+
+  return <AppShell view={view} setView={setView} user={user} unreadCount={unreadCount} logout={() => { apiLogout(); setUser(null) }}>{screen}</AppShell>
 }
