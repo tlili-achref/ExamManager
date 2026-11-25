@@ -26,8 +26,6 @@ app.add_middleware(
 
 PUBLIC_PREFIXES = (
     "/health",
-    "/status",
-    "/api/status",
     "/api/auth/login",
     "/api/auth/register",
     "/api/auth/refresh",
@@ -59,14 +57,55 @@ def validate_jwt(auth_header: str | None) -> dict:
         raise HTTPException(status_code=401, detail="Invalid or expired token")
 
 
+def authorize_request(role: str, method: str, path: str) -> None:
+    """Enforce role-based access control on gateway routes."""
+    if path in ("/status", "/api/status"):
+        if role != "ADMIN":
+            raise HTTPException(status_code=403, detail="Only ADMIN can view service status")
+        return
+
+    if path.startswith("/api/auth/") or path.startswith("/api/notifications"):
+        return
+
+    if path.startswith("/api/exams"):
+        if method in ("POST", "PUT", "PATCH", "DELETE") and role != "TEACHER":
+            raise HTTPException(status_code=403, detail="Only TEACHER can create, edit, or delete exams")
+        if role not in ("ADMIN", "TEACHER", "STUDENT"):
+            raise HTTPException(status_code=403, detail="Forbidden")
+        return
+
+    if path.startswith("/api/grades"):
+        if method in ("POST", "PUT", "PATCH", "DELETE") and role != "TEACHER":
+            raise HTTPException(status_code=403, detail="Only TEACHER can manage or publish grades")
+        if role not in ("TEACHER", "STUDENT"):
+            raise HTTPException(status_code=403, detail="ADMIN cannot access grades management")
+        return
+
+    if path.startswith("/api/rooms"):
+        if method in ("POST", "PUT", "PATCH", "DELETE") and role != "ADMIN":
+            raise HTTPException(status_code=403, detail="Only ADMIN can manage rooms")
+        return
+
+    if path.startswith("/api/users"):
+        if method in ("POST", "PUT", "PATCH", "DELETE") and role != "ADMIN":
+            raise HTTPException(status_code=403, detail="Only ADMIN can manage users, subjects, groups, or supervisors")
+        return
+
+    if path.startswith("/api/convocation"):
+        if role not in ("STUDENT", "ADMIN"):
+            raise HTTPException(status_code=403, detail="Forbidden")
+        return
+
+
 @app.middleware("http")
 async def jwt_middleware(request: Request, call_next):
     if request.method == "OPTIONS":
         return await call_next(request)
     path = request.url.path
-    if path.startswith("/api/") and not any(path.startswith(p) for p in PUBLIC_PREFIXES):
+    if (path.startswith("/api/") or path == "/status") and not any(path.startswith(p) for p in PUBLIC_PREFIXES):
         try:
             user_claims = validate_jwt(request.headers.get("Authorization"))
+            authorize_request(user_claims.get("role", ""), request.method, path)
             request.state.user = user_claims
         except HTTPException as exc:
             return JSONResponse(

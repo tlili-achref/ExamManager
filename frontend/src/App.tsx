@@ -106,17 +106,17 @@ function Select({ label, children, value, onChange }: { label?: string; children
   return <label className="field">{label && <span>{label}</span>}<select value={value} onChange={(e) => onChange?.(e.target.value)}>{children}</select></label>
 }
 
-const nav: { id: View; label: string; icon: IconName }[] = [
-  { id: 'dashboard', label: 'Tableau de bord', icon: 'grid' },
-  { id: 'exams', label: 'Examens', icon: 'exam' },
-  { id: 'planning', label: 'Planning', icon: 'calendar' },
-  { id: 'rooms', label: 'Salles', icon: 'room' },
-  { id: 'subjects', label: 'Matières & Groupes', icon: 'book' },
-  { id: 'supervisors', label: 'Surveillants', icon: 'people' },
-  { id: 'grades', label: 'Notes', icon: 'grade' },
-  { id: 'student', label: 'Espace étudiant', icon: 'student' },
-  { id: 'notifications', label: 'Notifications', icon: 'bell' },
-  { id: 'services', label: 'État des services', icon: 'server' },
+const nav: { id: View; label: string; icon: IconName; roles: AuthUser['role'][] }[] = [
+  { id: 'dashboard', label: 'Tableau de bord', icon: 'grid', roles: ['ADMIN', 'TEACHER'] },
+  { id: 'exams', label: 'Examens', icon: 'exam', roles: ['ADMIN', 'TEACHER'] },
+  { id: 'planning', label: 'Planning', icon: 'calendar', roles: ['ADMIN', 'TEACHER', 'STUDENT'] },
+  { id: 'rooms', label: 'Salles', icon: 'room', roles: ['ADMIN', 'TEACHER'] },
+  { id: 'subjects', label: 'Matières & Groupes', icon: 'book', roles: ['ADMIN', 'TEACHER'] },
+  { id: 'supervisors', label: 'Surveillants', icon: 'people', roles: ['ADMIN', 'TEACHER'] },
+  { id: 'grades', label: 'Notes', icon: 'grade', roles: ['TEACHER'] },
+  { id: 'student', label: 'Espace étudiant', icon: 'student', roles: ['STUDENT'] },
+  { id: 'notifications', label: 'Notifications', icon: 'bell', roles: ['ADMIN', 'TEACHER', 'STUDENT'] },
+  { id: 'services', label: 'État des services', icon: 'server', roles: ['ADMIN'] },
 ]
 
 const viewTitles: Record<View, { title: string; subtitle: string }> = {
@@ -198,12 +198,13 @@ function AppShell({ view, setView, user, unreadCount, logout, children }: { view
   const info = viewTitles[view]
   const go = (id: View) => { setView(id); setMobileOpen(false) }
   const roleLabel = user.role === 'ADMIN' ? 'Admin' : user.role === 'TEACHER' ? 'Enseignant' : 'Étudiant'
+  const visibleNav = nav.filter((item) => item.roles.includes(user.role))
 
   return <div className="app-shell">
     <aside className={`sidebar ${mobileOpen ? 'sidebar-open' : ''}`}>
       <div className="sidebar-head"><div className="brand brand-light"><span className="brand-mark">E</span><span>ExamManager</span></div><button className="icon-button close-menu" onClick={() => setMobileOpen(false)}><Icon name="close" /></button></div>
       <div className="session-pill"><span>SESSION ACTIVE</span><b>Principale · 2024/2025</b></div>
-      <nav>{nav.map((item) => <button key={item.id} onClick={() => go(item.id)} className={`nav-item ${view === item.id ? 'active' : ''}`}><Icon name={item.icon} size={19} /><span>{item.label}</span>{item.id === 'notifications' && unreadCount > 0 && <i>{unreadCount}</i>}</button>)}</nav>
+      <nav>{visibleNav.map((item) => <button key={item.id} onClick={() => go(item.id)} className={`nav-item ${view === item.id ? 'active' : ''}`}><Icon name={item.icon} size={19} /><span>{item.label}</span>{item.id === 'notifications' && unreadCount > 0 && <i>{unreadCount}</i>}</button>)}</nav>
       <div className="sidebar-user"><Avatar name={user.full_name} /><div><b>{user.full_name}</b><span>{roleLabel}</span></div><button className="icon-button" onClick={logout} title="Déconnexion"><Icon name="logout" size={18} /></button></div>
     </aside>
     {mobileOpen && <div className="scrim" onClick={() => setMobileOpen(false)} />}
@@ -214,7 +215,7 @@ function AppShell({ view, setView, user, unreadCount, logout, children }: { view
         <div className="topbar-actions"><div className="top-search"><Icon name="search" size={18} /><input placeholder="Rechercher..." /></div><button className="icon-button notification-button" onClick={() => setView('notifications')}><Icon name="bell" />{unreadCount > 0 && <span />}</button><Avatar name={user.full_name} /></div>
       </header>
       <main className="page-content">{children}</main>
-      <nav className="bottom-nav">{nav.slice(0, 4).map((item) => <button key={item.id} className={view === item.id ? 'active' : ''} onClick={() => go(item.id)}><Icon name={item.icon} size={20} /><span>{item.label.split(' ')[0]}</span></button>)}<button onClick={() => setMobileOpen(true)}><Icon name="menu" size={20} /><span>Plus</span></button></nav>
+      <nav className="bottom-nav">{visibleNav.slice(0, 4).map((item) => <button key={item.id} className={view === item.id ? 'active' : ''} onClick={() => go(item.id)}><Icon name={item.icon} size={20} /><span>{item.label.split(' ')[0]}</span></button>)}<button onClick={() => setMobileOpen(true)}><Icon name="menu" size={20} /><span>Plus</span></button></nav>
     </section>
   </div>
 }
@@ -227,7 +228,7 @@ function ExamListItem({ time, duration, title, meta, room, color }: { time: stri
   return <div className="exam-list-item"><div className="exam-time"><b>{time}</b><span>{duration || '1h30'}</span></div><i className={`exam-line ${color}`} /><div className="exam-info"><b>{title}</b><span>{meta}</span></div><span className="room-tag"><Icon name="room" size={15} />{room}</span><Icon name="chevron" size={18} /></div>
 }
 
-function Dashboard({ navigate }: { navigate: (v: View) => void }) {
+function Dashboard({ navigate, role }: { navigate: (v: View) => void; role: AuthUser['role'] }) {
   const [exams, setExams] = useState<Exam[]>([])
   const [rooms, setRooms] = useState<Room[]>([])
   const [teachersCount, setTeachersCount] = useState(0)
@@ -254,7 +255,7 @@ function Dashboard({ navigate }: { navigate: (v: View) => void }) {
 
   return <div className="page-stack">
     {error && <div className="warning-banner"><Icon name="warning" /><div><b>Erreur</b><span>{error}</span></div></div>}
-    <div className="quick-row"><div className="date-card"><Icon name="calendar" /><div><span>Session principale</span><b>03 — 21 Juin 2025</b></div></div><Button icon="plus" onClick={() => navigate('exams')}>Nouvel examen</Button></div>
+    <div className="quick-row"><div className="date-card"><Icon name="calendar" /><div><span>Session principale</span><b>03 — 21 Juin 2025</b></div></div>{role === 'TEACHER' && <Button icon="plus" onClick={() => navigate('exams')}>Nouvel examen</Button>}</div>
     <div className="kpi-grid">
       <KpiCard label="Examens planifiés" value={String(exams.length)} detail={String(exams.filter((e) => e.status === 'Planifié').length)} icon="exam" color="blue" />
       <KpiCard label="Salles disponibles" value={String(rooms.filter((r) => r.available).length)} detail={String(rooms.length)} icon="room" color="teal" />
@@ -321,7 +322,8 @@ function ExamForm({ close, initial, rooms, onSaved }: { close: () => void; initi
   return <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && close()}><div className="modal"><div className="modal-head"><div><h2>{initial ? 'Modifier l’examen' : 'Nouvel examen'}</h2><p>Renseignez les informations du créneau.</p></div><button className="icon-button" onClick={close}><Icon name="close" /></button></div><div className="form-grid"><Input label="Matière" value={subjectName} onChange={setSubjectName} /><Input label="Département" value={department} onChange={setDepartment} /><Input label="Groupe" value={groupName} onChange={setGroupName} /><Input label="Date" type="date" value={examDate} onChange={setExamDate} /><Input label="Heure" type="time" value={startTime} onChange={setStartTime} /><Select label="Durée" value={duration} onChange={setDuration}><option value="90">1h30</option><option value="120">2h00</option><option value="180">3h00</option></Select><Select label="Salle" value={roomName} onChange={setRoomName}>{rooms.map((r) => <option key={r.id} value={r.name}>{r.name}</option>)}</Select><Select label="Statut" value={statusVal} onChange={setStatusVal}><option>Planifié</option><option>En cours</option><option>Terminé</option><option>Annulé</option></Select></div>{error ? <div className="warning-banner"><Icon name="warning" /><div><b>Erreur</b><span>{error}</span></div></div> : <div className="modal-note"><Icon name="check" size={18} /> Prêt à enregistrer ce créneau.</div>}<div className="modal-actions"><Button variant="secondary" onClick={close}>Annuler</Button><Button onClick={save} disabled={saving}>{saving ? 'Enregistrement...' : initial ? 'Enregistrer' : 'Créer l’examen'}</Button></div></div></div>
 }
 
-function Exams() {
+function Exams({ role }: { role: AuthUser['role'] }) {
+  const canEdit = role === 'TEACHER'
   const [exams, setExams] = useState<Exam[]>([])
   const [rooms, setRooms] = useState<Room[]>([])
   const [search, setSearch] = useState('')
@@ -360,7 +362,7 @@ function Exams() {
         <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}><option>Tous les statuts</option><option>Planifié</option><option>En cours</option><option>Terminé</option><option>Annulé</option></select>
         <select value={deptFilter} onChange={(e) => setDeptFilter(e.target.value)}><option>Tous les départements</option><option>Génie Logiciel</option><option>Informatique</option><option>Réseaux</option></select>
       </div>
-      <Button icon="plus" onClick={() => setModal({ open: true, exam: null })}>Nouvel examen</Button>
+      {canEdit && <Button icon="plus" onClick={() => setModal({ open: true, exam: null })}>Nouvel examen</Button>}
     </div>
     {error && <div className="warning-banner"><Icon name="warning" /><div><b>Erreur</b><span>{error}</span></div></div>}
     <section className="card table-card">
@@ -378,7 +380,7 @@ function Exams() {
                 <td>{ex.room_name}</td>
                 <td>{ex.group_name}</td>
                 <td><Badge status={ex.status} /></td>
-                <td><div className="row-actions"><button className="icon-button" onClick={() => setModal({ open: true, exam: ex })}><Icon name="edit" size={17} /></button><button className="icon-button danger" onClick={() => handleDelete(ex.id)}><Icon name="trash" size={17} /></button></div></td>
+                <td>{canEdit && <div className="row-actions"><button className="icon-button" onClick={() => setModal({ open: true, exam: ex })}><Icon name="edit" size={17} /></button><button className="icon-button danger" onClick={() => handleDelete(ex.id)}><Icon name="trash" size={17} /></button></div>}</td>
               </tr>
             ))}
           </tbody>
@@ -440,7 +442,8 @@ function Planning() {
   </div>
 }
 
-function Rooms() {
+function Rooms({ role }: { role: AuthUser['role'] }) {
+  const canEdit = role === 'ADMIN'
   const [rooms, setRooms] = useState<Room[]>([])
   const [search, setSearch] = useState('')
   const [showForm, setShowForm] = useState(false)
@@ -469,7 +472,7 @@ function Rooms() {
   }
 
   return <div className="page-stack">
-    <div className="toolbar"><div className="search-field"><Icon name="search" size={18} /><input placeholder="Rechercher une salle..." value={search} onChange={(e) => setSearch(e.target.value)} /></div><Button icon="plus" onClick={() => setShowForm(true)}>Ajouter une salle</Button></div>
+    <div className="toolbar"><div className="search-field"><Icon name="search" size={18} /><input placeholder="Rechercher une salle..." value={search} onChange={(e) => setSearch(e.target.value)} /></div>{canEdit && <Button icon="plus" onClick={() => setShowForm(true)}>Ajouter une salle</Button>}</div>
     {error && <div className="warning-banner"><Icon name="warning" /><div><b>Erreur</b><span>{error}</span></div></div>}
     <div className="rooms-grid">
       {rooms.map((room) => (
@@ -478,7 +481,7 @@ function Rooms() {
           <h3>{room.name}</h3><p>{room.building} · {room.floor}</p>
           <div className="room-cap"><span><Icon name="people" size={17} /> Capacité</span><b>{room.capacity} places</b></div>
           <div className="usage"><div><span>Taux d’occupation</span><b>{room.usage_rate}%</b></div><div className="progress"><i style={{ width: `${room.usage_rate}%` }} /></div></div>
-          <div className="room-actions"><button className="icon-button danger" onClick={() => deleteRoom(room.id).then(load)}><Icon name="trash" size={18} /></button></div>
+          <div className="room-actions">{canEdit && <button className="icon-button danger" onClick={() => deleteRoom(room.id).then(load)}><Icon name="trash" size={18} /></button>}</div>
         </article>
       ))}
     </div>
@@ -518,7 +521,8 @@ function Subjects() {
   </div>
 }
 
-function Supervisors() {
+function Supervisors({ role }: { role: AuthUser['role'] }) {
+  const canEdit = role === 'ADMIN'
   const [teachers, setTeachers] = useState<Teacher[]>([])
   const [exams, setExams] = useState<Exam[]>([])
   const [assignments, setAssignments] = useState<SupervisorAssignment[]>([])
@@ -543,7 +547,7 @@ function Supervisors() {
       <div className="section-head"><div><h2>Enseignants</h2><p>{teachers.length} disponibles</p></div></div>
       <div className="teacher-list">
         {teachers.map((teacher, index) => (
-          <div className="teacher-chip" key={teacher.id} draggable onDragStart={(e) => e.dataTransfer.setData('teacherId', String(teacher.id))}>
+          <div className="teacher-chip" key={teacher.id} draggable={canEdit} onDragStart={(e) => canEdit && e.dataTransfer.setData('teacherId', String(teacher.id))}>
             <Avatar name={teacher.full_name} color={index % 2 ? 'teal' : 'blue'} />
             <div><b>{teacher.full_name}</b><span>{teacher.department}</span></div>
             <i>⠿</i>
@@ -557,11 +561,11 @@ function Supervisors() {
       {exams.map((exam) => {
         const examSup = assignments.filter((a) => a.exam_id === exam.id)
         return (
-          <div className="exam-slot" key={exam.id} onDragOver={(e) => e.preventDefault()} onDrop={(e) => handleDrop(exam.id, e.dataTransfer.getData('teacherId'))}>
+          <div className="exam-slot" key={exam.id} onDragOver={(e) => canEdit && e.preventDefault()} onDrop={(e) => canEdit && handleDrop(exam.id, e.dataTransfer.getData('teacherId'))}>
             <div className="slot-info"><span>{exam.start_time.slice(0, 5)}</span><div><b>{exam.subject_name}</b><small>{exam.room_name} · {exam.group_name}</small></div></div>
             <div className="slot-people">
-              {examSup.map((sup) => <span key={sup.id}><Avatar name={sup.teacher_name} /><b>{sup.teacher_name}</b><button onClick={() => removeSupervisor(sup.id).then(load)}>×</button></span>)}
-              <div className="drop-zone"><Icon name="plus" size={17} /> Déposer ici</div>
+              {examSup.map((sup) => <span key={sup.id}><Avatar name={sup.teacher_name} /><b>{sup.teacher_name}</b>{canEdit && <button onClick={() => removeSupervisor(sup.id).then(load)}>×</button>}</span>)}
+              {canEdit && <div className="drop-zone"><Icon name="plus" size={17} /> Déposer ici</div>}
             </div>
           </div>
         )
@@ -777,21 +781,33 @@ export default function App() {
     if (user) refreshUnread()
   }, [user, refreshUnread])
 
+  const allowedViews = useMemo(
+    () => (user ? nav.filter((item) => item.roles.includes(user.role)).map((i) => i.id) : []),
+    [user],
+  )
+  const activeView: View = user && allowedViews.includes(view)
+    ? view
+    : user?.role === 'STUDENT'
+      ? 'student'
+      : user?.role === 'TEACHER'
+        ? 'grades'
+        : 'dashboard'
+
   const screen = useMemo(() => {
     if (!user) return null
-    switch (view) {
-      case 'dashboard': return <Dashboard navigate={setView} />
-      case 'exams': return <Exams />
+    switch (activeView) {
+      case 'dashboard': return <Dashboard navigate={setView} role={user.role} />
+      case 'exams': return <Exams role={user.role} />
       case 'planning': return <Planning />
-      case 'rooms': return <Rooms />
+      case 'rooms': return <Rooms role={user.role} />
       case 'subjects': return <Subjects />
-      case 'supervisors': return <Supervisors />
+      case 'supervisors': return <Supervisors role={user.role} />
       case 'grades': return <Grades />
       case 'student': return <StudentSpace user={user} />
       case 'notifications': return <Notifications onChange={refreshUnread} />
       case 'services': return <Services />
     }
-  }, [view, user, refreshUnread])
+  }, [activeView, user, refreshUnread])
 
   if (!user) {
     return <Login onLogin={(u) => {
@@ -800,5 +816,5 @@ export default function App() {
     }} />
   }
 
-  return <AppShell view={view} setView={setView} user={user} unreadCount={unreadCount} logout={() => { apiLogout(); setUser(null) }}>{screen}</AppShell>
+  return <AppShell view={activeView} setView={setView} user={user} unreadCount={unreadCount} logout={() => { apiLogout(); setUser(null) }}>{screen}</AppShell>
 }
